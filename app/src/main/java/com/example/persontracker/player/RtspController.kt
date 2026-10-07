@@ -181,7 +181,7 @@ class RtspController(
         val source = RtspMediaSource.Factory()
             .setForceUseRtpTcp(forceTcp)
             .setTimeoutMs(8_000)
-            .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
+            .createMediaSource(MediaItem.fromUri(Uri.parse(normalizeRtspUrl(url))))
         player.setMediaSource(source)
         player.prepare()
         player.playWhenReady = true
@@ -195,6 +195,7 @@ class RtspController(
             return
         }
         attempt++
+        if (attempt % 3 == 0) forceTcp = !forceTcp   // جرّب النقل الآخر (TCP/UDP) بعد 3 إخفاقات
         val delayMs = min(1_000L shl min(attempt - 1, 4), 10_000L)
         setStatus(
             RtspState.RECONNECTING,
@@ -245,6 +246,31 @@ class RtspController(
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
         PlaybackException.ERROR_CODE_DECODING_FAILED ->
             "تعذّر فكّ ترميز الفيديو (جرّب بثًّا فرعيًا H.264)"
-        else -> "خطأ في البث (${e.errorCodeName})"
+        else -> {
+            val detail = generateSequence<Throwable>(e) { it.cause }
+                .mapNotNull { it.message?.takeIf { m -> m.isNotBlank() } }
+                .lastOrNull()?.take(120)
+            "خطأ في البث (${e.errorCodeName})" + (detail?.let { " · $it" } ?: "")
+        }
+    }
+
+    /**
+     * يرمّز اسم المستخدم وكلمة المرور (مثلاً كلمة مرور فيها @ أو # أو : أو /) كي لا يفسد
+     * Uri.parse تحليل العنوان؛ وهو سبب شائع لـ ERROR_CODE_IO_UNSPECIFIED مع كاميرات Hikvision.
+     */
+    private fun normalizeRtspUrl(raw: String): String {
+        val schemeEnd = raw.indexOf("://")
+        if (schemeEnd < 0) return raw
+        val scheme = raw.substring(0, schemeEnd + 3)
+        val rest = raw.substring(schemeEnd + 3)
+        val at = rest.lastIndexOf('@')
+        if (at < 0) return raw
+        val userInfo = rest.substring(0, at)
+        val hostAndPath = rest.substring(at + 1)
+        val colon = userInfo.indexOf(':')
+        val user = if (colon < 0) userInfo else userInfo.substring(0, colon)
+        val pass = if (colon < 0) null else userInfo.substring(colon + 1)
+        fun enc(x: String) = if (Regex("%[0-9A-Fa-f]{2}").containsMatchIn(x)) x else Uri.encode(x)
+        return scheme + enc(user) + (pass?.let { ":" + enc(it) } ?: "") + "@" + hostAndPath
     }
 }
