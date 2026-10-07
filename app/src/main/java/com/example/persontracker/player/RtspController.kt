@@ -183,15 +183,20 @@ class RtspController(
         statsWorking = false
         lastDisplayed = 0
         lastFrameMs = SystemClock.elapsedRealtime()
-        setStatus(RtspState.CONNECTING, if (attempt > 0) "إعادة المحاولة #$attempt…" else "جارٍ الاتصال بالكاميرا…")
+        // تدوير الاستراتيجية مع كل إخفاق: (النقل المختار + فكّ عتادي) ثم (برمجي) ثم النقل الآخر (عتادي ثم برمجي)
+        val idx = attempt % 4
+        val tcp = if (idx < 2) forceTcp else !forceTcp
+        val hw = idx % 2 == 0
+        val mode = (if (tcp) "TCP" else "UDP") + (if (hw) " · عتادي" else " · برمجي")
+        setStatus(RtspState.CONNECTING, if (attempt > 0) "إعادة المحاولة #$attempt ($mode)…" else "جارٍ الاتصال بالكاميرا…")
         try { player.stop() } catch (_: Exception) {}
         val media = Media(libVlc, Uri.parse(normalizeRtspUrl(url)))
-        media.setHWDecoderEnabled(true, false)
+        media.setHWDecoderEnabled(hw, false)
         media.addOption(":network-caching=300")
         media.addOption(":clock-jitter=0")
         media.addOption(":clock-synchro=0")
         media.addOption(":no-audio")
-        if (forceTcp) media.addOption(":rtsp-tcp")
+        if (tcp) media.addOption(":rtsp-tcp")
         player.media = media
         media.release() // المشغّل يحتفظ بنسخته
         player.play()
@@ -229,7 +234,6 @@ class RtspController(
             return
         }
         attempt++
-        if (attempt % 3 == 0) forceTcp = !forceTcp   // جرّب النقل الآخر (TCP/UDP) بعد 3 إخفاقات
         val delayMs = min(1_000L shl min(attempt - 1, 4), 10_000L)
         setStatus(
             RtspState.RECONNECTING,
