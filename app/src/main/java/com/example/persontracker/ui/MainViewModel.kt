@@ -176,7 +176,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     emaFps = if (emaFps == 0f) inst else emaFps * 0.8f + inst * 0.2f
                 }
                 lastDetectMs = now
-                _stats.update { it.copy(detectFps = emaFps, inferenceMs = inferMs) }
+                val luma = averageLuma(target)
+                _stats.update {
+                    it.copy(detectFps = emaFps, inferenceMs = inferMs, maxScore = detector.lastMaxScore, frameLuma = luma)
+                }
 
                 // خفض المعدل تلقائيًا عند الحرارة العالية أو وضع توفير الطاقة
                 val thermal = if (Build.VERSION.SDK_INT >= 29) pm.currentThermalStatus else 0
@@ -193,6 +196,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             workBitmap?.recycle()
             workBitmap = null
         }
+    }
+
+    /** متوسط سطوع الإطار من شبكة 16×9 عيّنة؛ 0 تعني إطارًا أسود (أي أن التقاط الصورة فاشل). */
+    private fun averageLuma(b: Bitmap): Int {
+        var sum = 0L
+        var n = 0
+        for (iy in 0 until 9) for (ix in 0 until 16) {
+            val px = b.getPixel(((ix + 0.5f) / 16f * b.width).toInt().coerceIn(0, b.width - 1),
+                ((iy + 0.5f) / 9f * b.height).toInt().coerceIn(0, b.height - 1))
+            sum += (((px shr 16) and 0xFF) * 299 + ((px shr 8) and 0xFF) * 587 + (px and 0xFF) * 114) / 1000
+            n++
+        }
+        return (sum / n).toInt()
     }
 
     private fun obtainBitmap(aspect: Float, longSide: Int): Bitmap {

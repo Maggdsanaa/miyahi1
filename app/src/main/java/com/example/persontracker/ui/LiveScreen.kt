@@ -224,6 +224,9 @@ private fun VideoPane(
             ) {
                 HudPill("👤 ${if (settings.detectionEnabled) people.size else 0}")
                 HudPill("FPS ${"%.0f".format(stats.videoFps)}")
+                if (settings.detectionEnabled) {
+                    HudPill("🔍 ${"%.2f".format(stats.maxScore)} · ☀ ${stats.frameLuma}")
+                }
             }
             Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) { StatusPill(status.state) }
         }

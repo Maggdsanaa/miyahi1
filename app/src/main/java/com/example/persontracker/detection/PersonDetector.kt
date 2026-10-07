@@ -10,4 +10,7 @@ import com.example.persontracker.domain.Detection
 interface PersonDetector : AutoCloseable {
     /** يعيد الأشخاص فقط، بإحداثيات طبيعية 0..1. يُستدعى من خيط خلفي واحد. */
     fun detect(bitmap: Bitmap): List<Detection>
+
+    /** أعلى ثقة لفئة «شخص» في آخر إطار (قبل أي ترشيح) — للتشخيص فقط. */
+    val lastMaxScore: Float get() = 0f
 }

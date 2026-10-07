@@ -21,6 +21,9 @@ class MediaPipePersonDetector(
 
     private val detector: ObjectDetector
 
+    @Volatile override var lastMaxScore: Float = 0f
+        private set
+
     init {
         val base = BaseOptions.builder().setModelAssetPath(modelAsset).build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()
@@ -38,9 +41,11 @@ class MediaPipePersonDetector(
         val h = bitmap.height.toFloat()
         val result = detector.detect(BitmapImageBuilder(bitmap).build())
         val out = ArrayList<Detection>()
+        var maxScore = 0f
         for (d in result.detections()) {
             val c = d.categories().firstOrNull() ?: continue
             if (c.categoryName() != "person") continue
+            if (c.score() > maxScore) maxScore = c.score()
             val b = d.boundingBox()
             val box = BoxF(
                 (b.left / w).coerceIn(0f, 1f), (b.top / h).coerceIn(0f, 1f),
@@ -48,6 +53,7 @@ class MediaPipePersonDetector(
             )
             if (box.w > 0.005f && box.h > 0.005f) out.add(Detection(box, c.score()))
         }
+        lastMaxScore = maxScore
         return out
     }
 

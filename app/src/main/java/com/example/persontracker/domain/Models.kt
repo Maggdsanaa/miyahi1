@@ -49,6 +49,9 @@ data class PipelineStats(
     val videoFps: Float = 0f,
     val detectFps: Float = 0f,
     val inferenceMs: Long = 0L,
+    /** تشخيص: أعلى ثقة «شخص» في آخر إطار، ومتوسط سطوع الإطار الملتقَط (0..255، -1 = غير معروف). */
+    val maxScore: Float = 0f,
+    val frameLuma: Int = -1,
 )
 
 /** يُخفي كلمة المرور من عنوان RTSP قبل عرضه في الواجهة. */

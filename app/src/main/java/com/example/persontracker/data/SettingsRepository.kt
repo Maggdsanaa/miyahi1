@@ -33,7 +33,7 @@ data class AppSettings(
     val profile: PerformanceProfile = PerformanceProfile.BALANCED,
     val forceTcp: Boolean = true,
     val autoReconnect: Boolean = true,
-    val minConfidence: Float = 0.45f,
+    val minConfidence: Float = 0.35f,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "camera_settings")
