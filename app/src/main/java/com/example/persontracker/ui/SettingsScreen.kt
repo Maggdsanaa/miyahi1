@@ -55,6 +55,7 @@ fun SettingsScreen(
     var autoReconnect by rememberSaveable { mutableStateOf(settings.autoReconnect) }
     var profileName by rememberSaveable { mutableStateOf(settings.profile.name) }
     var confidence by rememberSaveable { mutableStateOf(settings.minConfidence) }
+    var smallObjects by rememberSaveable { mutableStateOf(settings.smallObjects) }
 
     val trimmed = url.trim()
     val urlValid = (trimmed.startsWith("rtsp://", true) || trimmed.startsWith("rtsps://", true)) && trimmed.length > 10
@@ -121,8 +122,10 @@ fun SettingsScreen(
                 }
             }
 
+            ToggleRow("أشخاص صغار/بعيدون", "يقسّم الصورة إلى مربعات متراكبة لزيادة الدقة مع الأجسام الصغيرة (أبطأ نحو مرتين).", smallObjects) { smallObjects = it }
+
             Text("حدّ الثقة الأدنى: ${(confidence * 100).toInt()}%", fontWeight = FontWeight.SemiBold)
-            Slider(value = confidence, onValueChange = { confidence = it }, valueRange = 0.25f..0.85f)
+            Slider(value = confidence, onValueChange = { confidence = it }, valueRange = 0.15f..0.85f)
             Text(
                 "رفعه يقلل الكشوفات الخاطئة؛ خفضه يلتقط أشخاصًا أبعد أو أصغر.",
                 fontSize = 12.sp,
@@ -134,7 +137,7 @@ fun SettingsScreen(
                     onClick = {
                         val d = AppSettings()
                         url = d.rtspUrl; forceTcp = d.forceTcp; autoReconnect = d.autoReconnect
-                        profileName = d.profile.name; confidence = d.minConfidence
+                        profileName = d.profile.name; confidence = d.minConfidence; smallObjects = d.smallObjects
                     },
                     modifier = Modifier.weight(1f),
                 ) { Text("الافتراضي") }
@@ -149,6 +152,7 @@ fun SettingsScreen(
                                 profile = PerformanceProfile.entries.firstOrNull { it.name == profileName }
                                     ?: PerformanceProfile.BALANCED,
                                 minConfidence = confidence,
+                                smallObjects = smallObjects,
                             )
                         )
                         onBack()

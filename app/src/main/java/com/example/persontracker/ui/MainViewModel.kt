@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.persontracker.data.AppSettings
 import com.example.persontracker.data.SettingsRepository
 import com.example.persontracker.detection.MediaPipePersonDetector
+import com.example.persontracker.detection.TiledPersonDetector
 import com.example.persontracker.detection.PersonDetector
 import com.example.persontracker.domain.PipelineStats
 import com.example.persontracker.domain.RtspState
@@ -117,7 +118,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- حلقة الاكتشاف + التتبع ----
     private suspend fun detectionLoop() {
-        var detector: PersonDetector? = null
+        var baseDetector: PersonDetector? = null
+        var tiledDetector: PersonDetector? = null
         val pm = getApplication<Application>().getSystemService(PowerManager::class.java)
         var lastDetectMs = 0L
         var emaFps = 0f
@@ -141,21 +143,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     continue
                 }
 
-                if (detector == null) {
-                    detector = try {
+                if (baseDetector == null) {
+                    baseDetector = try {
                         MediaPipePersonDetector(getApplication()).also { _detectorError.value = null }
                     } catch (t: Throwable) {
                         _detectorError.value = "تعذّر تحميل نموذج الاكتشاف: ${t.message ?: t.javaClass.simpleName}"
                         null
                     }
-                    if (detector == null) {
+                    if (baseDetector == null) {
                         delay(3_000)
                         continue
                     }
                 }
 
                 val t0 = SystemClock.elapsedRealtime()
-                val target = obtainBitmap(controller.videoAspect.value, s.profile.inputLongSide)
+                val longSide = if (s.smallObjects) max(s.profile.inputLongSide, 1024) else s.profile.inputLongSide
+                val target = obtainBitmap(controller.videoAspect.value, longSide)
                 val grabbed = withContext(Dispatchers.Main.immediate) {
                     frameGrabber?.invoke(target) ?: false
                 }
@@ -165,6 +168,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val tInfer = SystemClock.elapsedRealtime()
+                val base = baseDetector!!
+                val detector = if (s.smallObjects) {
+                    tiledDetector ?: TiledPersonDetector(base).also { tiledDetector = it }
+                } else base
                 val detections = detector.detect(target)
                 val inferMs = SystemClock.elapsedRealtime() - tInfer
 
@@ -192,7 +199,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(max(wait, 4L))
             }
         } finally {
-            detector?.close()
+            baseDetector?.close()
             workBitmap?.recycle()
             workBitmap = null
         }

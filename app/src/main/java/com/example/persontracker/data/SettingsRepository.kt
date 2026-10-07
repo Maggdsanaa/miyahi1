@@ -33,7 +33,9 @@ data class AppSettings(
     val profile: PerformanceProfile = PerformanceProfile.BALANCED,
     val forceTcp: Boolean = true,
     val autoReconnect: Boolean = true,
-    val minConfidence: Float = 0.35f,
+    val minConfidence: Float = 0.30f,
+    /** يقسّم الإطار إلى مربعات متراكبة لاكتشاف الأشخاص الصغار/البعيدين (أبطأ ~2×). */
+    val smallObjects: Boolean = true,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "camera_settings")
@@ -47,6 +49,7 @@ class SettingsRepository(private val context: Context) {
         val TCP = booleanPreferencesKey("force_tcp")
         val RECONNECT = booleanPreferencesKey("auto_reconnect")
         val CONFIDENCE = floatPreferencesKey("min_confidence")
+        val SMALL = booleanPreferencesKey("small_objects")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data
@@ -62,6 +65,7 @@ class SettingsRepository(private val context: Context) {
                 forceTcp = p[Keys.TCP] ?: d.forceTcp,
                 autoReconnect = p[Keys.RECONNECT] ?: d.autoReconnect,
                 minConfidence = p[Keys.CONFIDENCE] ?: d.minConfidence,
+                smallObjects = p[Keys.SMALL] ?: d.smallObjects,
             )
         }
 
@@ -73,6 +77,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.TCP] = s.forceTcp
             p[Keys.RECONNECT] = s.autoReconnect
             p[Keys.CONFIDENCE] = s.minConfidence
+            p[Keys.SMALL] = s.smallObjects
         }
     }
 }

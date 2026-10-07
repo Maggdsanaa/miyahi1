@@ -16,7 +16,7 @@ import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
 class MediaPipePersonDetector(
     context: Context,
     modelAsset: String = "person_detector.tflite",
-    scoreThreshold: Float = 0.20f,
+    scoreThreshold: Float = 0.12f,
 ) : PersonDetector {
 
     private val detector: ObjectDetector
