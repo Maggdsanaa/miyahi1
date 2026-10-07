@@ -5,17 +5,9 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
 import android.os.SystemClock
+import android.view.TextureView
+import android.view.View
 import androidx.annotation.MainThread
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
-import androidx.media3.common.VideoSize
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.rtsp.RtspMediaSource
-import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import com.example.persontracker.domain.RtspState
 import com.example.persontracker.domain.RtspStatus
 import kotlinx.coroutines.CoroutineScope
@@ -26,17 +18,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.Media
+import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.IVLCVout
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 
 /**
- * يلفّ ExoPlayer لبثّ RTSP بأقل تأخير ممكن، مع:
- *  - مخزن مؤقت صغير جدًا + RTP عبر TCP (اختياري) لثبات الاتصال.
- *  - تعطيل الصوت (توفير CPU/بطارية).
- *  - إعادة اتصال تلقائية بتأخير تصاعدي (1، 2، 4، 8، 10 ثوانٍ) + مراقب «تجمّد» + استعادة فورية عند عودة الشبكة.
+ * يشغّل بثّ RTSP عبر libVLC (بدل Media3) لأنه يتحمّل أجهزة Hikvision التي ترسل H.265 دون
+ * سطر `a=fmtp` في وصف SDP (Media3 يرفض ذلك بالرسالة «missing attribute fmtp»).
+ *
+ *  - تخزين مؤقت صغير + RTP عبر TCP (اختياري) + فكّ ترميز عتادي عند توفره.
+ *  - الصوت معطّل.
+ *  - إعادة اتصال تلقائية بتأخير تصاعدي + مراقب «تجمّد» + استعادة فورية عند عودة الشبكة.
  * يجب استدعاء كل الدوال العامة من الخيط الرئيسي.
+ *
+ * الواجهة العامة مطابقة للنسخة السابقة، فلا يتغيّر MainViewModel.
  */
-@OptIn(UnstableApi::class)
 class RtspController(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -50,6 +49,8 @@ class RtspController(
     /** عدّاد الإطارات المعروضة (يُصفَّر من حلقة الإحصاءات لحساب FPS). */
     val frameCounter = AtomicInteger(0)
     @Volatile private var lastFrameMs = 0L
+    private var lastDisplayed = 0
+    private var statsWorking = false
 
     private var url = ""
     private var forceTcp = true
@@ -62,40 +63,16 @@ class RtspController(
     private var watchdogJob: Job? = null
     private var networkRegistered = false
 
-    val player: ExoPlayer = ExoPlayer.Builder(context)
-        .setLoadControl(
-            DefaultLoadControl.Builder()
-                // min, max, bufferForPlayback, bufferForPlaybackAfterRebuffer (ms) — قيم منخفضة للتأخير الأدنى
-                .setBufferDurationsMs(300, 800, 100, 200)
-                .build()
-        )
-        .build()
+    private val libVlc = LibVLC(context, arrayListOf("--no-audio"))
+    private val player = MediaPlayer(libVlc)
 
-    private val listener = object : Player.Listener {
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            when (playbackState) {
-                Player.STATE_BUFFERING ->
-                    if (hasRendered) setStatus(RtspState.BUFFERING, "تخزين مؤقت…")
-                    else setStatus(RtspState.CONNECTING, "جارٍ الاتصال بالكاميرا…")
-                Player.STATE_READY -> {
-                    hasRendered = true
-                    attempt = 0
-                    lastFrameMs = SystemClock.elapsedRealtime()
-                    setStatus(RtspState.PLAYING, "")
-                }
-                Player.STATE_ENDED -> scheduleReconnect("انتهى البث")
-                else -> Unit
-            }
-        }
+    private var attachedView: TextureView? = null
+    private var layoutListener: View.OnLayoutChangeListener? = null
 
-        override fun onPlayerError(error: PlaybackException) {
-            scheduleReconnect(describe(error))
-        }
-
-        override fun onVideoSizeChanged(videoSize: VideoSize) {
-            if (videoSize.width > 0 && videoSize.height > 0) {
-                _videoAspect.value = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
-            }
+    private val videoLayoutListener = IVLCVout.OnNewVideoLayoutListener { _, _, _, visW, visH, sarNum, sarDen ->
+        if (visW > 0 && visH > 0) {
+            val sar = if (sarNum > 0 && sarDen > 0) sarNum.toFloat() / sarDen else 1f
+            _videoAspect.value = visW * sar / visH
         }
     }
 
@@ -107,17 +84,43 @@ class RtspController(
     }
 
     init {
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-            .build()
-        player.volume = 0f
-        player.playWhenReady = true
-        player.addListener(listener)
-        player.setVideoFrameMetadataListener(VideoFrameMetadataListener { _, _, _, _ ->
-            frameCounter.incrementAndGet()
-            lastFrameMs = SystemClock.elapsedRealtime()
+        player.setEventListener(MediaPlayer.EventListener { ev ->
+            // الحدث يُعاد استخدامه داخليًا: انسخ القيم قبل النشر إلى الخيط الرئيسي
+            val type = ev.type
+            val voutCount = ev.voutCount
+            scope.launch { onPlayerEvent(type, voutCount) }
         })
     }
+
+    // ------------------------------------------------------------------------------------
+    // ربط شاشة العرض (TextureView — مطلوب لالتقاط إطارات الاكتشاف عبر getBitmap)
+
+    @MainThread
+    fun attachView(tv: TextureView) {
+        detachView()
+        attachedView = tv
+        val vout = player.vlcVout
+        vout.setVideoView(tv)
+        vout.attachViews(videoLayoutListener)
+        player.videoScale = MediaPlayer.ScaleType.SURFACE_FILL // الصندوق نفسه بنسبة الفيديو
+        val l = View.OnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            if (v.width > 0 && v.height > 0) vout.setWindowSize(v.width, v.height)
+        }
+        layoutListener = l
+        tv.addOnLayoutChangeListener(l)
+        if (tv.width > 0 && tv.height > 0) vout.setWindowSize(tv.width, tv.height)
+    }
+
+    @MainThread
+    fun detachView() {
+        layoutListener?.let { attachedView?.removeOnLayoutChangeListener(it) }
+        layoutListener = null
+        attachedView = null
+        val vout = player.vlcVout
+        if (vout.areViewsAttached()) vout.detachViews()
+    }
+
+    // ------------------------------------------------------------------------------------
 
     @MainThread
     fun startNetworkMonitor() {
@@ -150,10 +153,9 @@ class RtspController(
     fun stop() {
         reconnectJob?.cancel(); reconnectJob = null
         watchdogJob?.cancel(); watchdogJob = null
-        player.stop()
-        player.clearMediaItems()
         hasRendered = false
         setStatus(RtspState.IDLE, "")
+        try { player.stop() } catch (_: Exception) {}
     }
 
     @MainThread
@@ -163,8 +165,10 @@ class RtspController(
             try { connectivity.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
             networkRegistered = false
         }
-        player.removeListener(listener)
+        detachView()
+        player.setEventListener(null)
         player.release()
+        libVlc.release()
     }
 
     // ------------------------------------------------------------------------------------
@@ -176,20 +180,50 @@ class RtspController(
             return
         }
         hasRendered = false
+        statsWorking = false
+        lastDisplayed = 0
         lastFrameMs = SystemClock.elapsedRealtime()
         setStatus(RtspState.CONNECTING, if (attempt > 0) "إعادة المحاولة #$attempt…" else "جارٍ الاتصال بالكاميرا…")
-        val source = RtspMediaSource.Factory()
-            .setForceUseRtpTcp(forceTcp)
-            .setTimeoutMs(8_000)
-            .createMediaSource(MediaItem.fromUri(Uri.parse(normalizeRtspUrl(url))))
-        player.setMediaSource(source)
-        player.prepare()
-        player.playWhenReady = true
+        try { player.stop() } catch (_: Exception) {}
+        val media = Media(libVlc, Uri.parse(normalizeRtspUrl(url)))
+        media.setHWDecoderEnabled(true, false)
+        media.addOption(":network-caching=300")
+        media.addOption(":clock-jitter=0")
+        media.addOption(":clock-synchro=0")
+        media.addOption(":no-audio")
+        if (forceTcp) media.addOption(":rtsp-tcp")
+        player.media = media
+        media.release() // المشغّل يحتفظ بنسخته
+        player.play()
         startWatchdog()
     }
 
+    private fun onPlayerEvent(type: Int, voutCount: Int) {
+        val st = _status.value.state
+        when (type) {
+            MediaPlayer.Event.Opening ->
+                if (st != RtspState.PLAYING) setStatus(RtspState.CONNECTING, "جارٍ الاتصال بالكاميرا…")
+            MediaPlayer.Event.Vout ->
+                if (voutCount > 0) markPlaying()
+            MediaPlayer.Event.EncounteredError ->
+                if (st != RtspState.RECONNECTING && st != RtspState.IDLE)
+                    scheduleReconnect("تعذّر تشغيل البث — تحقق من العنوان وكلمة المرور والترميز")
+            MediaPlayer.Event.EndReached ->
+                if (st != RtspState.RECONNECTING && st != RtspState.IDLE)
+                    scheduleReconnect("انتهى البث")
+            else -> Unit
+        }
+    }
+
+    private fun markPlaying() {
+        hasRendered = true
+        attempt = 0
+        lastFrameMs = SystemClock.elapsedRealtime()
+        if (_status.value.state != RtspState.PLAYING) setStatus(RtspState.PLAYING, "")
+    }
+
     private fun scheduleReconnect(reason: String) {
-        player.stop()
+        try { player.stop() } catch (_: Exception) {}
         if (!autoReconnect) {
             setStatus(RtspState.ERROR, reason)
             return
@@ -209,20 +243,39 @@ class RtspController(
         }
     }
 
+    /** كل ثانية: يقرأ عدّاد الصور المعروضة من VLC (لحساب FPS وكشف التجمّد) ويراقب المهلات. */
     private fun startWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = scope.launch {
             while (isActive) {
-                delay(2_000)
+                delay(1_000)
                 val now = SystemClock.elapsedRealtime()
+                pollFrames(now)
                 when (_status.value.state) {
                     RtspState.PLAYING ->
-                        if (now - lastFrameMs > 6_000) scheduleReconnect("توقّف وصول الإطارات")
+                        if (statsWorking && now - lastFrameMs > 6_000) scheduleReconnect("توقّف وصول الإطارات")
                     RtspState.CONNECTING, RtspState.BUFFERING ->
                         if (now - statusSince > 15_000) scheduleReconnect("انتهت مهلة الاتصال")
                     else -> Unit
                 }
             }
+        }
+    }
+
+    private fun pollFrames(now: Long) {
+        val m = player.media ?: return
+        try {
+            val displayed = m.stats?.displayedPictures ?: return
+            val delta = displayed - lastDisplayed
+            if (delta > 0) {
+                statsWorking = true
+                frameCounter.addAndGet(delta)
+                lastDisplayed = displayed
+                lastFrameMs = now
+                if (_status.value.state != RtspState.PLAYING) markPlaying()
+            }
+        } finally {
+            m.release()
         }
     }
 
@@ -239,25 +292,7 @@ class RtspController(
         _status.value = RtspStatus(state, message, attempt)
     }
 
-    private fun describe(e: PlaybackException): String = when (e.errorCode) {
-        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "تعذّر الوصول إلى الكاميرا"
-        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        PlaybackException.ERROR_CODE_DECODING_FAILED ->
-            "تعذّر فكّ ترميز الفيديو (جرّب بثًّا فرعيًا H.264)"
-        else -> {
-            val detail = generateSequence<Throwable>(e) { it.cause }
-                .mapNotNull { it.message?.takeIf { m -> m.isNotBlank() } }
-                .lastOrNull()?.take(120)
-            "خطأ في البث (${e.errorCodeName})" + (detail?.let { " · $it" } ?: "")
-        }
-    }
-
-    /**
-     * يرمّز اسم المستخدم وكلمة المرور (مثلاً كلمة مرور فيها @ أو # أو : أو /) كي لا يفسد
-     * Uri.parse تحليل العنوان؛ وهو سبب شائع لـ ERROR_CODE_IO_UNSPECIFIED مع كاميرات Hikvision.
-     */
+    /** يرمّز اسم المستخدم وكلمة المرور (إن احتويا رموزًا خاصة مثل @ # : /) قبل تمريرها. */
     private fun normalizeRtspUrl(raw: String): String {
         val schemeEnd = raw.indexOf("://")
         if (schemeEnd < 0) return raw

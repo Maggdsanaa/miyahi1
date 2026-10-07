@@ -5,4 +5,4 @@
 -dontwarn com.google.auto.value.**
 -dontwarn javax.lang.model.**
 -dontwarn autovalue.shaded.**
--keep class androidx.media3.exoplayer.rtsp.** { *; }
+-keep class org.videolan.** { *; }

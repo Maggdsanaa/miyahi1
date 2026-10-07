@@ -1,7 +1,6 @@
 package com.example.persontracker.ui
 
 import android.content.res.Configuration
-import android.view.LayoutInflater
 import android.view.TextureView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -51,9 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.PlayerView
-import com.example.persontracker.R
 import com.example.persontracker.data.AppSettings
 import com.example.persontracker.domain.PipelineStats
 import com.example.persontracker.domain.RtspState
@@ -192,7 +188,6 @@ private fun HudPill(text: String) {
     )
 }
 
-@OptIn(UnstableApi::class)
 @Composable
 private fun VideoPane(
     modifier: Modifier,
@@ -209,17 +204,14 @@ private fun VideoPane(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    val pv = LayoutInflater.from(ctx).inflate(R.layout.view_player, null, false) as PlayerView
-                    pv.player = vm.controller.player
-                    val tv = pv.videoSurfaceView as? TextureView
-                    if (tv != null) {
-                        vm.frameGrabber = { bmp -> tv.isAvailable && tv.getBitmap(bmp) != null }
-                    }
-                    pv
+                    val tv = TextureView(ctx)
+                    vm.controller.attachView(tv)
+                    vm.frameGrabber = { bmp -> tv.isAvailable && tv.getBitmap(bmp) != null }
+                    tv
                 },
-                onRelease = { pv ->
+                onRelease = {
                     vm.frameGrabber = null
-                    pv.player = null
+                    vm.controller.detachView()
                 },
             )
             if (settings.detectionEnabled && status.state == RtspState.PLAYING) {

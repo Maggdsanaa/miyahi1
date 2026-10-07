@@ -33,7 +33,7 @@ import kotlin.math.roundToInt
 
 /**
  * المعمارية:
- *   RTSP ──► ExoPlayer (فكّ ترميز عتادي) ──► TextureView ──► (عرض مباشر على الشاشة)
+ *   RTSP ──► libVLC (فكّ ترميز عتادي) ──► TextureView ──► (عرض مباشر على الشاشة)
  *                                                │
  *                          getBitmap() بدقة صغيرة كل N ms
  *                                                ▼

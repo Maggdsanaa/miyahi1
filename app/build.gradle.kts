@@ -71,11 +71,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Media3 / RTSP
-    val media3 = "1.5.1"
-    implementation("androidx.media3:media3-exoplayer:$media3")
-    implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
-    implementation("androidx.media3:media3-ui:$media3")
+    // libVLC: مشغّل RTSP متسامح مع أجهزة Hikvision (H.265 بدون fmtp)
+    implementation("org.videolan.android:libvlc-all:3.6.0")
 
     // اكتشاف الأشخاص محليًا (TFLite + XNNPACK)
     implementation("com.google.mediapipe:tasks-vision:0.10.21")

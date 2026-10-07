@@ -1,6 +1,6 @@
 # RTSP Person Tracker — تطبيق Android لاكتشاف وتتبع الأشخاص من كاميرا IP
 
-تطبيق **Kotlin + Jetpack Compose** يعرض بثّ **RTSP** مباشرة من الكاميرا عبر **Media3/ExoPlayer**، ويكتشف الأشخاص ويتتبّعهم **محليًا على الهاتف** (بدون خادم وبدون إنترنت)،
+تطبيق **Kotlin + Jetpack Compose** يعرض بثّ **RTSP** مباشرة من الكاميرا عبر **libVLC**، ويكتشف الأشخاص ويتتبّعهم **محليًا على الهاتف** (بدون خادم وبدون إنترنت)،
 ويرسم صندوقًا ومعرّفًا ثابتًا لكل شخص (`Person 1`, `Person 2`, …) مع عدد الأشخاص الحاليين.
 
 > **الخصوصية:** لا يوجد أي تعرّف على الوجوه أو تحديد هوية. التطبيق يكتشف *وجود شخص* ويتتبع *حركته* داخل الفيديو فقط
@@ -10,7 +10,7 @@
 
 ```mermaid
 flowchart LR
-    CAM[كاميرا IP<br/>RTSP] -->|RTP/TCP| EXO[ExoPlayer<br/>فكّ ترميز عتادي]
+    CAM[كاميرا IP<br/>RTSP] -->|RTP/TCP| EXO[libVLC<br/>فكّ ترميز عتادي]
     EXO --> TV[TextureView]
     TV -->|عرض مباشر بدون تأخير إضافي| SCREEN[الشاشة]
     TV -->|getBitmap صغير<br/>256–448px كل 60–250ms| DET[PersonDetector<br/>EfficientDet-Lite0 int8<br/>TFLite + XNNPACK]
@@ -47,7 +47,7 @@ app/src/main/java/com/example/persontracker/
 ├── tracking/
 │   ├── ByteTracker.kt                # ByteTrack + Kalman أحادي البعد
 │   └── Hungarian.kt                  # خوارزمية الإسناد
-├── player/RtspController.kt          # ExoPlayer + إعادة الاتصال + مراقب التجمّد + مراقب الشبكة
+├── player/RtspController.kt          # libVLC + إعادة الاتصال + مراقب التجمّد + مراقب الشبكة
 └── ui/                               # Compose: LiveScreen, SettingsScreen, Overlay, ViewModel
 ```
 
