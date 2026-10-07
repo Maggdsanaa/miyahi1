@@ -1,3 +1,4 @@
+import java.net.URL
 import java.util.Properties
 
 plugins {
@@ -97,7 +98,7 @@ val downloadPersonModel by tasks.registering {
         var ok = false
         for (u in urls) {
             try {
-                java.net.URL(u).openStream().use { input ->
+                URL(u).openStream().use { input ->
                     modelFile.outputStream().use { out -> input.copyTo(out) }
                 }
                 ok = modelFile.length() > 100_000L
